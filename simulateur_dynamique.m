@@ -1,0 +1,143 @@
+function Resultats = simulateur_dynamique(Tf, dt, U_, Beta_, mu_sol, Params, type_contact,gl)
+%Parametres vehicule
+m =Params.m; %(kg)
+Iz= Params.Iz; % Inertie de lacet (kg/m2)
+Lf =Params.Lf; % Essieu avant(m)
+Lr=Params.Lr; %Essieu arriere (m)
+Cf=Params.Cf ;%Rigidité derive av(N/rad)
+Cr=Params.Cr; %Rigidité derive ar (N/rad)
+L = Lf + Lr; %Empattement (m)
+g = 9.81;
+
+% Vecteur temps
+T_=(0:dt:Tf)'; %(s)
+N=length(T_);
+
+%Initialisation 
+X_=zeros(N,1); % (m)
+Y_=zeros(N,1); % (m)
+dtheta_=zeros(N,1); % vitesse lacet (rad/s)
+delta_=zeros(N,1);  % angle derive (rad)
+theta_=zeros(N,1);  % angle lacet (rad)
+Ay_CdG_=zeros(N,1);  % accel lateral CdG (m/s2)
+deltaf_=zeros(N,1); % angle derive avant 
+deltar_=zeros(N,1); % angle derive arriere
+
+%Condition initial
+dtheta_0 = 0; 
+theta_0 = 0; 
+delta_0 = 0; 
+X_0=0; 
+Y_0=0;
+Ay_0=0;
+
+% Boucle
+for k=1:N-1
+    vitesse=U_(k); %(m/s)
+    beta=Beta_(k);   %(rad)
+    mu=mu_sol(k); %(coeff friction)
+    
+   % Angles glissement
+    deltaf = delta_0+Lf*dtheta_0/vitesse-beta;  
+    deltar = delta_0-Lr*dtheta_0/vitesse;
+ 
+   
+    %Contact pneu et forces
+     switch type_contact
+        case "Linéaire"            
+            Fy_f =-Cf*deltaf*mu; %(N)
+            Fy_r =-Cr*deltar*mu;  %(N)
+            
+         case "Linéaire avec saturation" %Modèle analytique: Dugoff
+            %Charges verticales
+            Fz_f= m*g*(Lr / L); 
+            Fz_r= m*g*(Lf / L);
+            
+            % Paramètre glissement
+            Kx = 100000;    %Raideur longitudinal(N/gl où gl taux de glissement longitudinale)
+            
+            %                essieu avant
+            denom_f=2*sqrt((Kx*gl)^2+(Cf*tan(deltaf))^2);
+            if denom_f < 1e-5 %Empêcher la division par 0
+                sigma_f =1;
+            else
+                sigma_f =((1 -abs(gl))*mu*Fz_f) /denom_f;
+            end
+            
+            % Fonction Tau(sigma)
+            if sigma_f < 1
+                tau_f= sigma_f*(2- sigma_f);
+            else
+                tau_f=1;
+            end
+            %Calcul force latérale avant
+            Fy_f =-Cf * (tan(deltaf) /(1 - abs(gl))) *tau_f;
+            
+            %               essieu arrière
+            denom_r=2*sqrt((Kx*gl)^2+(Cr*tan(deltar))^2);
+
+            if denom_r<1e-5
+                sigma_r= 1; 
+            else
+                sigma_r =((1-abs(gl))*mu*Fz_r)/denom_r;
+            end
+            
+            if sigma_r <1
+                tau_r= sigma_r*(2-sigma_r);
+            else
+                tau_r=1 ;
+            end
+            Fy_r =-Cr*(tan(deltar)/(1-abs(gl)))*tau_r; 
+    end
+
+
+   % Dynamiques
+    ddtheta = (Lf*Fy_f-Lr*Fy_r)/Iz;
+    ddelta = (Fy_f+Fy_r) / (m*vitesse)-dtheta_0;
+    
+    % Integration Euler
+    dtheta_1= dtheta_0+dt*ddtheta;
+    delta_1= delta_0+dt*ddelta;
+    theta_1= theta_0+dt*dtheta_0;
+    
+    % Calcul nouvelle position
+    X_1 = X_0+dt*vitesse*cos(theta_0+delta_0);
+    Y_1 = Y_0 +dt*vitesse*sin(theta_0+delta_0);
+    
+    % Accel laterale
+    Ay_1 = vitesse*(dtheta_0 + ddelta);
+    
+    % Sauvegarde
+    X_(k+1)=X_1;
+    Y_(k+1)=Y_1;
+    dtheta_(k+1)=dtheta_1;
+    delta_(k+1)=delta_1;
+    theta_(k+1)=theta_1;
+    Ay_CdG_(k+1)=Ay_1 ;
+    deltaf_(k+1)=deltaf;
+    deltar_(k+1)=deltar;
+    
+    %Mise a jour
+    dtheta_0=dtheta_1;
+    delta_0=delta_1;
+    theta_0=theta_1;
+    X_0=X_1;
+    Y_0=Y_1;
+    Ay_0=Ay_1;
+end
+
+%Sortie
+Resultats.Temps_=T_; %(s)
+Resultats.X_=X_;  %(m)
+Resultats.Y_=Y_; %(m)
+Resultats.Vitesse_=U_ *3.6; %  km/h
+Resultats.Dtheta_=dtheta_* 180/pi;% deg/s
+Resultats.Ay_=Ay_CdG_/g; % acceleration en g
+Resultats.Delta_=delta_ * 180/pi;  % deg
+Resultats.Deltaf_= deltaf_ *180/pi;  % deg
+Resultats.Deltar_=deltar_ *180/pi; %deg
+
+% Calcul théorique sans glissement
+Resultats.Dtheta_theo_=(U_.*tan(Beta_)/L)*180/pi;  
+
+end
